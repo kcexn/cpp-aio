@@ -1,5 +1,5 @@
 /*     
-*	Copyright 2024 Kevin Exton
+*	Copyright 2025 Kevin Exton
 *	This file is part of cpp-aio.
 *
 * cpp-aio is free software: you can redistribute it and/or modify it under the 
@@ -31,6 +31,7 @@ namespace io {
 	struct poll_t {
 		using event_type = struct pollfd;
 		using events_type = std::vector<event_type>;
+		using event_mask = short;
 	};
 	
 	template<class PollT>
@@ -52,6 +53,7 @@ namespace io {
 		using duration_type = std::chrono::milliseconds;
 		using event_type = poll_t::event_type;
 		using events_type = poll_t::events_type;
+		using event_mask = poll_t::event_mask;
 		static const size_type npos = -1;
 	};
 
@@ -64,6 +66,7 @@ namespace io {
 			using duration_type = typename Traits::duration_type;
 			using event_type = typename Traits::event_type;
 			using events_type = typename Traits::events_type;
+			using event_mask = typename Traits::event_mask;
 			static const size_type npos = Traits::npos;
 			
 			size_type operator()(duration_type timeout = duration_type(0)){ return _poll(timeout); }
@@ -94,6 +97,7 @@ namespace io {
 			using duration_type = Base::duration_type;
 			using event_type = Base::event_type;
 			using events_type = Base::events_type;
+			using event_mask = Base::event_mask;
 			
 			poller(): Base(){}
 			~poller() = default;
@@ -115,6 +119,7 @@ namespace io {
 			using duration_type = typename Traits::duration_type;
 			using event_type = typename Traits::event_type;
 			using events_type = typename Traits::events_type;
+			using event_mask = typename Traits::event_mask;
 			using trigger_type = std::uint32_t;
 			using interest_type = std::tuple<native_handle_type, trigger_type>;
 			using interest_list = std::vector<interest_type>;
@@ -145,6 +150,7 @@ namespace io {
 			}
 			
 			size_type wait(duration_type timeout = duration_type(0)){ return _poller(timeout); }
+			size_type size() { return _list.size(); }
 			
 			events_type events() { 
 				events_type events(_poller.size());
@@ -169,6 +175,7 @@ namespace io {
 			using trigger_type = Base::trigger_type;
 			using event_type = Base::event_type;
 			using events_type = Base::events_type;
+			using event_mask = Base::event_mask;
 			
 			trigger(): Base(_poller){}
 			~trigger() = default;
@@ -178,6 +185,21 @@ namespace io {
 			
 		private:
 			poller _poller;
+	};
+
+	template<class TriggerT>
+	class basic_handler {
+		public:
+			using trigger_type = TriggerT;
+			using event_type = typename trigger_type::event_type;
+			using events_type = typename trigger_type::events_type;
+			using event_mask = typename trigger_type::event_mask;
+
+			int handle(events_type& events) { return _handle(events); }
+			virtual ~basic_handler() = default;
+
+		protected:
+			virtual int _handle(events_type& events) { return 0; }
 	};
 }
 #endif
