@@ -92,20 +92,6 @@ namespace io{
             if(listen(socket, *backlog)) throw std::runtime_error("Unable to listen on socket.");
         }
         
-        static void socket_connect(native_handle_type socket, optval& val){ 
-            sockaddr_t *addr;
-            socklen_t size = 0;
-            std::memcpy(&addr, val.data(), val.size());
-            switch(addr->sa_family){
-                case AF_UNIX:
-                    size = sizeof(struct sockaddr_un);
-                    break;
-                default:
-                    throw std::runtime_error("Unknown socket domain.");
-            }
-            if(connect(socket, addr, size)) throw std::runtime_error("Unable to connect socket.");
-        }
-        
         static std::size_t getbuflen(std::vector<std::vector<char> >& buffers, const char* base){
             auto it = std::find_if(buffers.cbegin(), buffers.cend(), [&](const auto& buf){ return buf.data() == base; });
             if(it == buffers.cend()) return SIZE_MAX;
@@ -131,15 +117,14 @@ namespace io{
             iovec& iov = _iov[1];
             struct msghdr *msgptr = &_msghdrs[1];
             auto& address = std::get<sockaddr_storage>(_addresses[1]);
-            auto& addrlen = std::get<socklen_t>(_addresses[1]);
-            if(address.ss_family != AF_UNSPEC){
+            if(!_connected && address.ss_family != AF_UNSPEC){
+                auto& addrlen = std::get<socklen_t>(_addresses[1]);
                 msgptr->msg_name = &address;
                 msgptr->msg_namelen = addrlen;
             } else {
                 msgptr->msg_name = nullptr;
                 msgptr->msg_namelen = 0;
             }
-            
             if(size > 0){
                 iov.iov_base = buf;
                 iov.iov_len = size;
@@ -170,6 +155,8 @@ namespace io{
             }
             if(len < 0){
                 switch(errno){
+                    case EISCONN:
+                        _connected = true;
                     case EINTR:
                         return _send(buf, size);
                     case EWOULDBLOCK:
@@ -331,15 +318,34 @@ namespace io{
         sockbuf::int_type sockbuf::overflow(sockbuf::int_type ch){
             if(Base::pbase() == nullptr) return traits_t::eof();
             if(sync()) {
-                if(_errno == ENOTCONN){
-                    /* If we are here, then we should assume that a non-blocking connect has been issued and that it is safe to poll on the socket. */
-                    /* TODO: Make the socket stream API work in such a way that we do not have to assume this. */
-                    if(_poll(_socket, POLLOUT)) return traits_t::eof();
-                    return overflow(ch);
-                } else return traits_t::eof();
+                auto& addr = _addresses[1];
+                auto *dst = &(std::get<sockaddr_storage>(addr));
+                auto& len = std::get<socklen_t>(addr);      
+                switch(_errno){
+                    case ENOTCONN:
+                        if(dst->ss_family == AF_UNSPEC) return traits_t::eof();
+                        if(connectto(reinterpret_cast<const struct sockaddr*>(dst), len)){
+                            switch(_errno){
+                                case EALREADY:
+                                case EAGAIN:
+                                case EINPROGRESS:
+                                    if(_poll(_socket, POLLOUT)) return traits_t::eof();
+                                    else return overflow(ch);                            
+                                default:
+                                    return traits_t::eof();
+                            }
+                        } else if(_poll(_socket, POLLOUT)) return traits_t::eof();
+                        else return overflow(ch);                 
+                    default:
+                        return traits_t::eof();
+                }
+            }
+            if(Base::pptr() == Base::epptr()){
+                if(_poll(_socket, POLLOUT)) return traits_t::eof();
+                else return overflow(ch);
             }
             if(!traits_t::eq_int_type(ch, traits_t::eof())) return Base::sputc(ch);
-            return ch;
+            else return ch;
         }
         
         sockbuf::int_type sockbuf::underflow() {
@@ -437,7 +443,6 @@ namespace io{
             std::transform(name.begin(), name.end(), name.begin(), [](char c){ return std::toupper(c); });
             if(name == "BIND") socket_bind(_socket, val);
             if(name == "LISTEN") socket_listen(_socket, val);
-            if(name == "CONNECT") socket_connect(_socket, val);
         }
         
         optval sockbuf::getopt(sockopt opt){
@@ -447,6 +452,26 @@ namespace io{
             if(name == "ACCEPT") return socket_accept(_socket, val);
             if(name == "SOCKNAME") return socket_name(_socket, val);
             return {};
+        }
+        int sockbuf::connectto(const struct sockaddr* addr, socklen_t addrlen){
+            int ret = 0;
+            if(connect(_socket, addr, addrlen)){
+                switch(errno){
+                    case EINTR:
+                        return connectto(addr, addrlen);
+                    default:
+                        _errno = errno;
+                        ret = -1;
+                        break;
+                }
+            }
+            _connected = true;
+            auto& destination = _addresses[1];
+            auto *d_addr = &(std::get<sockaddr_storage>(destination));
+            auto& d_len = std::get<socklen_t>(destination);
+            d_len = addrlen;
+            std::memcpy(d_addr, addr, d_len);            
+            return ret;
         }
 
         sockbuf::~sockbuf(){

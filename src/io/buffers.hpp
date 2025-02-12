@@ -121,6 +121,8 @@ namespace io{
                 
                 void pubsetopt(sockopt opt){ return setopt(opt); }
                 optval pubgetopt(sockopt opt){ return getopt(opt); }
+
+                int connectto(const struct sockaddr* addr, socklen_t addrlen);
                 
                 native_handle_type native_handle() { return _socket; }
                 ~sockbuf();
@@ -144,6 +146,7 @@ namespace io{
                 native_handle_type _socket{};
                 std::array<iovec, 2> _iov{};
                 int _errno;
+                bool _connected;
                 
                 void _init_buf_ptrs();
                 int _send(char_type *buf, size_type size);

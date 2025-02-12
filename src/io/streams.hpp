@@ -101,6 +101,7 @@ namespace io{
                 sockbuf::native_handle_type native_handle() { return _buf.native_handle(); }
                 sockbuf::storage_array& addresses() { return _buf.addresses(); }
                 int err() { return _buf.err(); }
+                int connectto(const struct sockaddr* addr, socklen_t len) { return _buf.connectto(addr, len); }
                 
                 ~sockstream(){}
         };
